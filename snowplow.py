@@ -282,7 +282,7 @@ def update_sankey(selected_events):
             value=value
         )
     ))
-    fig.update_layout(title_text="Sankey Diagram", font_size=15)
+    fig.update_layout(title_text="Sankey Diagram for Event", font_size=15)
     return fig
 
 @app.callback(
@@ -322,7 +322,7 @@ def update_sankey_2(selected_events):
             value=value
         )
     ))
-    screen_fig.update_layout(title_text="Sankey Diagram for Screen Transitions", font_size=15)
+    screen_fig.update_layout(title_text="Sankey Diagram for Screen Name", font_size=15)
     return screen_fig
 
 
