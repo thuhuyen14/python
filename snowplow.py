@@ -11,7 +11,8 @@ file_path = 'D:\\sqllab_query_dwh_snowplowfact_events_l3d_sp_20250105T170411.csv
 df = pd.read_csv(file_path, encoding='utf-8')
 
 #Xử lý dữ liệu Bar Chart
-df['event_time'] = pd.to_datetime(df['event_time'])  # Chuyển event_time sang datetime
+df['event_time'] = pd.to_datetime(df['event_time'], format='ISO8601', errors='coerce')
+  # Chuyển event_time sang datetime
 df['event_date'] = df['event_time'].dt.date          # Lấy ngày từ event_time
 
 # Nhóm dữ liệu giống logic SQL
@@ -48,6 +49,16 @@ event_counts = pd.concat([event_counts, total_row], ignore_index=True)
 sankey_data = event_counts[event_counts["event_name"] != "Total"]
 
 print(sankey_data)
+
+# Thêm code này vào phần xử lý dữ liệu ban đầu để đảm bảo có cột platform trong các dataframe Sankey
+sankey_data = pd.merge(
+    sankey_data,
+    df[["event_name", "platform"]].drop_duplicates(),
+    on="event_name",
+    how="left"
+)
+
+
 
 # Chuẩn bị dữ liệu cho Sankey diagram
 source = sankey_data["event_name"]
@@ -88,6 +99,7 @@ screen_data = df.groupby(["screen_name", "next_screen_name"]).size().reset_index
 screen_data = screen_data[screen_data['value'] >= 3]  # Lọc những chuyển đổi có số lần >= 3
 screen_data = screen_data[screen_data["screen_name"] != screen_data["next_screen_name"]]  # Loại bỏ trường hợp screen_name = next_screen_name
 
+
 # Tính tổng số sự kiện cho các chuyển đổi màn hình
 total_screen_value = screen_data['value'].sum()
 
@@ -106,7 +118,13 @@ sankey_screen_data = screen_data[screen_data["screen_name"] != "Total"]
 
 # Kiểm tra kết quả (optional)
 print(sankey_screen_data)
-
+# Thêm code này vào phần xử lý dữ liệu ban đầu để đảm bảo có cột platform trong các dataframe Sankey
+sankey_screen_data = pd.merge(
+    sankey_screen_data,
+    df[["screen_name", "platform"]].drop_duplicates(),
+    on="screen_name",
+    how="left"
+)
 # Chuẩn bị dữ liệu cho Sankey chart cho chuyển đổi giữa các màn hình
 screen_source = sankey_screen_data["screen_name"]
 screen_target = sankey_screen_data["next_screen_name"]
@@ -143,6 +161,15 @@ screen_fig.update_layout(title_text="Sankey Diagram for Screen Transitions", fon
 # Khởi tạo ứng dụng Dash
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])  # Sử dụng Bootstrap
 
+# Loại bỏ các event_name và next_event_name không mong muốn từ dữ liệu bảng
+excluded_events = ['page_ping', 'screen_viewed', 'application_background', 
+                   'application_foreground', 'page_view']
+
+# Lọc bỏ các sự kiện này khỏi event_counts
+filtered_event_counts = event_counts[
+    ~event_counts["event_name"].isin(excluded_events) & 
+    ~event_counts["next_event_name"].isin(excluded_events)
+]
 # Hàm tạo bảng dữ liệu đẹp hơn
 def generate_table(dataframe, max_rows=10):
     return dbc.Table(
@@ -159,7 +186,7 @@ def generate_table(dataframe, max_rows=10):
     )
 # Tạo danh sách sự kiện duy nhất từ cả event_name và next_event_name, loại bỏ None/NaN và "Total". Phần này dùng để xíu cho vào Filter
 unique_events = sorted(
-    set(event_counts["event_name"].dropna()).union(set(event_counts["next_event_name"].dropna())) - {"Total"}
+    set(filtered_event_counts["event_name"].dropna()).union(set(filtered_event_counts["next_event_name"].dropna())) - {"Total"}
 )
 # Giao diện web với 2 tab: Chart và Data
 app.layout = html.Div([
@@ -184,19 +211,32 @@ app.layout = html.Div([
                     placeholder="Select platform(s)"
                 ),
 
-                dcc.Graph(id="bar-chart"),
-                dcc.Graph(id="sankey-chart"),
-                dcc.Graph(id="sankey-chart-2")  # Biểu đồ Sankey cho chuyển đổi màn hình
+                # Bar chart
+                html.Div([
+                    dcc.Graph(id="bar-chart", style={"height": "400px"})  # Cố định chiều cao biểu đồ
+                ], style={"margin-bottom": "20px"}),
 
+                # Sankey chart
+                html.Div([
+                    html.H5("Sankey Diagram for Event", style={"textAlign": "center"}),
+                    html.H5("Note: Chart này chỉ lấy các cặp event - next_event có số lượng lớn nhất để chart đỡ rối. Ngoài ra đã loại bỏ các event ít value", style={"textAlign": "left", "fontSize": "14px"}),
+                    dcc.Graph(id="sankey-chart", style={"height": "400px"})  # Cố định chiều cao
+                ], style={"margin-bottom": "20px"}),
+
+                # Sankey chart cho screen name
+                html.Div([
+                    html.H5("Sankey Diagram for Screen Name", style={"textAlign": "center"}),
+                    dcc.Graph(id="sankey-chart-2", style={"height": "400px", "overflow":"auto"})  # Cố định chiều cao
+                ], style={"padding": "20px"})
             ])
         ]),
         dcc.Tab(label="Data", children=[
             html.Div([
-                html.H5("Event Data", style={"margin-top": "20px"}),
-                generate_table(event_counts, max_rows=20),  # Tạo bảng dữ liệu
+                html.H5("Event Data", style={"margin-top": "0px"}),
+                generate_table(filtered_event_counts, max_rows=20),  # Tạo bảng dữ liệu
                 html.Button("Tải xuống CSV", id="download-btn", n_clicks=0),  # Nút tải xuống
                 dcc.Download(id="download-data")  # Thành phần tải xuống
-            ], style={"padding": "20px"})
+            ], style={"padding": "0px"})
         ])
     ])
 ])
@@ -214,17 +254,20 @@ def download_data(n_clicks):
 # Callback để cập nhật biểu đồ
 @app.callback(
     Output("bar-chart", "figure"),
-    [Input("platform-filter", "value")]
+    [Input("platform-filter", "value"),
+     Input("event-filter", "value")]
 )
-def update_bar_chart(selected_platforms):
-    # Lọc dữ liệu theo platform được chọn
+def update_bar_chart(selected_events, selected_platforms):
+   # Lọc dữ liệu theo platform và event được chọn
+    filtered_data =  grouped_data.copy()  # Nên tạo copy để tránh ảnh hưởng đến dữ liệu gốc
+    if selected_events:
+        filtered_data = filtered_data[filtered_data["event_name"].isin(selected_events)]
     if selected_platforms:
-        filtered_data = grouped_data[grouped_data["platform"].isin(selected_platforms)]
-    else:
-        filtered_data = grouped_data
-     # Đảm bảo event_date có kiểu ngày tháng
-    filtered_data['event_date'] = pd.to_datetime(filtered_data['event_date']).dt.date
+        filtered_data = filtered_data[filtered_data["platform"].isin(selected_platforms)]
+    
 
+     # Đảm bảo event_date có kiểu ngày tháng
+    #filtered_data['event_date'] = pd.to_datetime(filtered_data['event_time'], format='ISO8601', errors='coerce')
     # Tạo biểu đồ bar chart bằng Plotly Express
     fig = px.bar(
         filtered_data,
@@ -245,17 +288,30 @@ def update_bar_chart(selected_platforms):
 # Callback để cập nhật Sankey Chart
 @app.callback(
     Output("sankey-chart", "figure"),  # Cập nhật biểu đồ Sankey
-    [Input("event-filter", "value")]  # Nhận giá trị từ Dropdown
+    [Input("event-filter", "value"),
+     Input("platform-filter", "value")]  # Nhận giá trị từ Dropdown
 )
 
-def update_sankey(selected_events):
-    # Nếu không chọn gì, hiển thị toàn bộ dữ liệu
-    if not selected_events:
-        filtered_data = sankey_data
-    else:
-        # Lọc dữ liệu để chỉ giữ các sự kiện đã chọn
-        filtered_data = sankey_data[sankey_data["event_name"].isin(selected_events)]
-
+def update_sankey(selected_events, selected_platforms):
+    filtered_data = sankey_data.copy()
+    # Loại bỏ các event_name và next_event_name không mong muốn
+    excluded_events = ['page_ping', 'screen_viewed', 'application_background', 
+                       'application_foreground', 'page_view']
+    
+    filtered_data = filtered_data[
+        ~filtered_data["event_name"].isin(excluded_events) & 
+        ~filtered_data["next_event_name"].isin(excluded_events)
+    ]
+    if selected_events:
+        # Cần filter cả event_name và next_event_name
+        filtered_data = filtered_data[
+            (filtered_data["event_name"].isin(selected_events)) |
+            (filtered_data["next_event_name"].isin(selected_events))
+        ]
+        if selected_platforms:
+            filtered_data = filtered_data[filtered_data["platform"].isin(selected_platforms)]
+    
+    
     # Chuẩn bị dữ liệu cho Sankey từ filtered_data
     source = filtered_data["event_name"]
     target = filtered_data["next_event_name"]
@@ -287,26 +343,38 @@ def update_sankey(selected_events):
 
 @app.callback(
     Output("sankey-chart-2", "figure"),  # Cập nhật biểu đồ Sankey 2
-    [Input("event-filter", "value")]     # Input từ Dropdown cho sự kiện (hoặc cái gì đó khác, tuỳ vào yêu cầu)
+    [Input("event-filter", "value"),
+     Input("platform-filter", "value")
+    ]     # Input từ Dropdown cho sự kiện (hoặc cái gì đó khác, tuỳ vào yêu cầu)
 )
-def update_sankey_2(selected_events):
-    # Lọc dữ liệu cho chuyển đổi màn hình (screen_name -> next_screen_name)
-    if not selected_events:
-        filtered_data = sankey_screen_data
+def update_sankey_2(selected_events, selected_platforms):
+    filtered_data = sankey_screen_data.copy()
+    if selected_events:
+        # Cần filter cả event_name và next_event_name
+        filtered_data = filtered_data[
+            (filtered_data["event_name"].isin(selected_events)) |
+            (filtered_data["next_event_name"].isin(selected_events))
+        ]
+        if selected_platforms:
+            filtered_data = filtered_data[filtered_data["platform"].isin(selected_platforms)]
+     # Lọc top N liên kết dựa trên giá trị :vì có quá nhiều screen_name nên cần chỉ hiển thị ra 20 screen_name th
+    top_n_links = 20  # Hiển thị tối đa 20 link
+    if len(filtered_data) > top_n_links:
+        filtered_links = filtered_data.nlargest(top_n_links, 'value')  # Lấy top N
     else:
-        filtered_data = sankey_screen_data[sankey_screen_data["screen_name"].isin(selected_events)]
+        filtered_links = filtered_data
 
-    # Chuẩn bị dữ liệu cho Sankey từ filtered_data
-    source = filtered_data["screen_name"]
-    target = filtered_data["next_screen_name"]
-    value = filtered_data["value"]
+  # Chuẩn bị dữ liệu cho Sankey từ filtered_data
+    source = filtered_links["screen_name"]
+    target = filtered_links["next_screen_name"]
+    value = filtered_links["value"]
 
     # Tạo danh sách node duy nhất và mapping
     all_nodes = list(set(source).union(set(target)))
     node_map = {node: idx for idx, node in enumerate(all_nodes)}
 
-    source_idx = filtered_data["screen_name"].map(node_map)
-    target_idx = filtered_data["next_screen_name"].map(node_map)
+    source_idx = filtered_links["screen_name"].map(node_map)
+    target_idx = filtered_links["next_screen_name"].map(node_map)
 
     # Tạo biểu đồ Sankey
     screen_fig = go.Figure(go.Sankey(
